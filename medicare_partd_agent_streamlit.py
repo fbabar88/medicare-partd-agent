@@ -5,21 +5,22 @@ import openai
 import xml.etree.ElementTree as ET
 from requests.exceptions import RequestException
 
-# DNS resolution check for api.cms.gov
-try:
-    ip = socket.gethostbyname("api.cms.gov")
-    st.write(f"api.cms.gov resolves to {ip}")
-except Exception as e:
-    st.error(f"DNS lookup failed: {e}")
-
 # Configure your API keys in .streamlit/secrets.toml:
 # OPENAI_API_KEY      = "sk-...your OpenAI key..."
 # CMS_PLAN_FINDER_KEY = "eyJhbGciOi...your CMS key..."
 
 openai.api_key = st.secrets.get("OPENAI_API_KEY", "")
 
+# Set Streamlit page config FIRST
 st.set_page_config(page_title="Medicare Part D Advisor", layout="centered")
 st.title("Medicare Part D Plan Advisor MVP")
+
+# DNS resolution check for api.cms.gov
+try:
+    ip = socket.gethostbyname("api.cms.gov")
+    st.write(f"api.cms.gov resolves to {ip}")
+except Exception as e:
+    st.error(f"DNS lookup failed: {e}")
 
 # ------- XML Request & Parsing Helpers ------- #
 def build_xml_request(zip_code, meds_list, top_n=3):
@@ -95,4 +96,52 @@ def parse_plans_from_xml(xml_str):
 
 # ------- LLM Prompt Helper ------- #
 def make_prompt(zip_code, meds_list, plans):
-    header
+    header = f"User in {zip_code} takes: {', '.join(meds_list)}.\nHere are three Part D plans:\n"
+    body_lines = [
+        f"- {p['plan_name']}: ${p['premium']} premium, {p['tier_info']}"
+        for p in plans
+    ]
+    tail = "\nPlease summarize in plain language which plan is best for this user and why."
+    return header + "\n".join(body_lines) + tail
+
+# ------- Streamlit UI ------- #
+zip_code   = st.text_input("Enter Your ZIP Code")
+meds_input = st.text_area("List Your Medications (comma-separated)")
+
+if st.button("Find My Plans"):
+    if not zip_code or not meds_input:
+        st.error("Please provide both a ZIP code and at least one medication.")
+    else:
+        meds_list = [m.strip() for m in meds_input.split(",") if m.strip()]
+        with st.spinner("Fetching plans from CMS..."):
+            xml_response = lookup_partd_plans_xml(zip_code, meds_list)
+            plans = parse_plans_from_xml(xml_response)
+
+        if plans:
+            st.subheader("Top 3 Plans")
+            for i, p in enumerate(plans, start=1):
+                st.markdown(f"**{i}. {p['plan_name']}**")
+                st.write(f"- Monthly Premium: ${p['premium']}")
+                st.write(f"- Drug Tiers: {p['tier_info']}")
+
+            if openai.api_key:
+                prompt = make_prompt(zip_code, meds_list, plans)
+                with st.spinner("Generating plain-language summary..."):
+                    response = openai.ChatCompletion.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": "You are a friendly Medicare advisor."},
+                            {"role": "user",   "content": prompt}
+                        ],
+                        max_tokens=200
+                    )
+                    explanation = response.choices[0].message.content
+                    st.subheader("Why This Plan?")
+                    st.write(explanation)
+            else:
+                st.info("OpenAI API key not found; skipping GPT summary.")
+        else:
+            st.warning("No matching plans found. Please check your inputs or try again.")
+
+st.markdown("---")
+st.caption("MVP: ZIP + meds → CMS XML lookup → GPT-4 rationale")
