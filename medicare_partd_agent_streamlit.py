@@ -4,6 +4,16 @@ import openai
 import xml.etree.ElementTree as ET
 from requests.exceptions import RequestException
 
+import streamlit as st
+import socket
+
+try:
+    ip = socket.gethostbyname("api.cms.gov")
+    st.write(f"api.cms.gov resolves to {ip}")
+except Exception as e:
+    st.error(f"DNS lookup failed: {e}")
+
+
 # Configure your API keys in .streamlit/secrets.toml:
 # OPENAI_API_KEY      = "sk-...your OpenAI key..."
 # CMS_PLAN_FINDER_KEY = "eyJhbGciOi...your CMS key..."
